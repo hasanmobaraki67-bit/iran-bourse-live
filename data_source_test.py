@@ -1,54 +1,87 @@
-from datetime import datetime, timezone
 import json
 import urllib.request
-import urllib.error
+import urllib.parse
+from datetime import datetime, timezone
 
-# این مرحله فقط برای بررسی دسترسی به منبع داده است.
-# هنوز هیچ منبعی به عنوان منبع زنده بورس تأیید نشده است.
-
-SOURCES_TO_TEST = [
-    {
-        "name": "TSETMC",
-        "url": "https://www.tsetmc.com/"
-    }
-]
+BASE_URL = "https://cdn.tsetmc.com/api"
 
 
-def test_source(source):
-    result = {
-        "source": source["name"],
-        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-        "reachable": False,
-        "http_status": None,
-        "error": None,
-        "note": (
-            "دسترسی به صفحه اصلی به‌تنهایی به معنی دسترسی "
-            "به داده زنده تابلو نیست."
-        ),
-    }
-
+def get_json(url):
     request = urllib.request.Request(
-        source["url"],
-        headers={"User-Agent": "IranBourseLive/0.1"}
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 IranBourseLive/0.2",
+            "Accept": "application/json",
+        },
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            result["reachable"] = 200 <= response.status < 400
-            result["http_status"] = response.status
+    with urllib.request.urlopen(request, timeout=20) as response:
+        if response.status != 200:
+            raise RuntimeError(f"HTTP status: {response.status}")
 
-    except urllib.error.HTTPError as error:
-        result["http_status"] = error.code
-        result["error"] = str(error)
+        return json.loads(response.read().decode("utf-8"))
+
+
+def main():
+    result = {
+        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source": "TSETMC CDN API",
+        "tests": {},
+    }
+
+    # آزمایش اول: جست‌وجوی نماد فولاد
+    try:
+        symbol = urllib.parse.quote("فولاد", safe="")
+        data = get_json(
+            f"{BASE_URL}/Instrument/GetInstrumentSearch/{symbol}"
+        )
+
+        items = data.get("instrumentSearch", [])
+        result["tests"]["symbol_search"] = {
+            "success": True,
+            "count": len(items),
+            "symbols": [
+                {
+                    "symbol": item.get("lVal18AFC"),
+                    "name": item.get("lVal30"),
+                    "insCode": item.get("insCode"),
+                }
+                for item in items[:5]
+            ],
+        }
+
+        # آزمایش دوم: دریافت اطلاعات قیمت نماد فولاد
+        found = next(
+            (
+                item for item in items
+                if item.get("lVal18AFC") == "فولاد"
+                and item.get("insCode")
+            ),
+            None,
+        )
+
+        if found:
+            ins_code = found["insCode"]
+            quote = get_json(
+                f"{BASE_URL}/ClosingPrice/GetClosingPriceInfo/{ins_code}"
+            )
+
+            result["tests"]["stock_quote"] = {
+                "success": True,
+                "insCode": ins_code,
+                "data": quote,
+            }
+        else:
+            result["tests"]["stock_quote"] = {
+                "success": False,
+                "error": "نماد فولاد در پاسخ جست‌وجو پیدا نشد",
+            }
 
     except Exception as error:
-        result["error"] = str(error)
+        result["tests"]["api_error"] = str(error)
 
-    return result
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
-    results = [test_source(source) for source in SOURCES_TO_TEST]
-    print(json.dumps(results, ensure_ascii=False, indent=2))
-
-
+    main()
