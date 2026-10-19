@@ -1,125 +1,99 @@
-
 import json
 import urllib.request
 import urllib.parse
+import zipfile
+import io
 from datetime import datetime, timezone
 
-HOSTS = [
-    "https://cdn.tsetmc.com/api",
-    "https://cdn10.tsetmc.com/api",
-    "https://cdn1.tsetmc.com/api",
-    "https://cdn2.tsetmc.com/api",
-]
+CDN = "https://cdn.tsetmc.com/api"
+LEGACY_MARKET_WATCH = "https://old.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
 
 
-def get_json(path):
-    errors = []
-
-    for host in HOSTS:
-        url = host + path
-
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json",
-            },
-        )
-
-        try:
-            with urllib.request.urlopen(
-                request, timeout=8
-            ) as response:
-                data = json.loads(
-                    response.read().decode("utf-8")
-                )
-                return data, host
-
-        except Exception as error:
-            errors.append(
-                host + " -> " + str(error)
-            )
-
-    raise RuntimeError(
-        "همه سرورها ناموفق بودند: "
-        + " | ".join(errors)
+def request_bytes(url, timeout=20):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json,*/*",
+        },
     )
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return response.status, response.headers.get("Content-Type", ""), response.read()
+
+
+def test_cdn():
+    symbol = urllib.parse.quote("فولاد", safe="")
+    url = CDN + "/Instrument/GetInstrumentSearch/" + symbol
+    status, content_type, body = request_bytes(url, timeout=12)
+    data = json.loads(body.decode("utf-8-sig"))
+    items = data.get("instrumentSearch", [])
+
+    found = next(
+        (x for x in items if x.get("lVal18AFC") == "فولاد" and x.get("insCode")),
+        None,
+    )
+
+    result = {
+        "success": bool(found),
+        "http_status": status,
+        "content_type": content_type,
+        "search_count": len(items),
+        "symbol_found": found,
+    }
+
+    if found:
+        quote_url = CDN + "/ClosingPrice/GetClosingPriceInfo/" + str(found["insCode"])
+        quote_status, quote_type, quote_body = request_bytes(quote_url, timeout=12)
+        quote = json.loads(quote_body.decode("utf-8-sig"))
+        result["quote"] = {
+            "success": quote_status == 200 and bool(quote),
+            "http_status": quote_status,
+            "content_type": quote_type,
+            "response_keys": list(quote.keys()),
+        }
+
+    return result
+
+
+def test_legacy_market_watch():
+    status, content_type, body = request_bytes(
+        LEGACY_MARKET_WATCH, timeout=25
+    )
+    is_xlsx = body[:2] == b"PK" and zipfile.is_zipfile(io.BytesIO(body))
+
+    return {
+        "success": status == 200 and is_xlsx,
+        "http_status": status,
+        "content_type": content_type,
+        "bytes_received": len(body),
+        "xlsx_signature_valid": is_xlsx,
+    }
 
 
 def main():
     result = {
-        "checked_at_utc": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "source": "TSETMC API",
+        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
+        "note": "Green workflow alone does not prove live data access.",
         "tests": {},
     }
 
-    try:
-        symbol = urllib.parse.quote(
-            "فولاد", safe=""
-        )
-
-        data, host = get_json(
-            "/Instrument/GetInstrumentSearch/"
-            + symbol
-        )
-
-        items = data.get("instrumentSearch", [])
-
-        result["source_host"] = host
-        result["tests"]["symbol_search"] = {
-            "success": True,
-            "count": len(items),
-            "symbols": [
-                {
-                    "symbol": item.get("lVal18AFC"),
-                    "name": item.get("lVal30"),
-                    "insCode": item.get("insCode"),
-                }
-                for item in items[:5]
-            ],
-        }
-
-        found = next(
-            (
-                item for item in items
-                if item.get("lVal18AFC") == "فولاد"
-                and item.get("insCode")
-            ),
-            None,
-        )
-
-        if found:
-            ins_code = found["insCode"]
-
-            quote, quote_host = get_json(
-                "/ClosingPrice/GetClosingPriceInfo/"
-                + str(ins_code)
-            )
-
-            result["tests"]["stock_quote"] = {
-                "success": True,
-                "host": quote_host,
-                "insCode": ins_code,
-                "data": quote,
-            }
-        else:
-            result["tests"]["stock_quote"] = {
+    for name, tester in (
+        ("tsetmc_cdn", test_cdn),
+        ("tsetmc_legacy_market_watch", test_legacy_market_watch),
+    ):
+        try:
+            result["tests"][name] = tester()
+        except Exception as error:
+            result["tests"][name] = {
                 "success": False,
-                "error": "نماد فولاد پیدا نشد",
+                "error": str(error),
             }
 
-    except Exception as error:
-        result["tests"]["api_error"] = str(error)
-
-    print(
-        json.dumps(
-            result,
-            ensure_ascii=False,
-            indent=2
-        )
+    result["any_source_validated"] = any(
+        item.get("success") for item in result["tests"].values()
     )
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
