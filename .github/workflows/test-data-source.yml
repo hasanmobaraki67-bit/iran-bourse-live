@@ -1,4 +1,11 @@
- - main
+name: Test TSETMC Data Sources
+
+
+on:
+workflow_dispatch:
+push:
+branches:
+- main
 paths:
 - 'data_source_test.py'
 - '.github/workflows/test-data-source.yml'
