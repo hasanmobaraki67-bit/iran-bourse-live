@@ -1,100 +1,30 @@
-import json
-import urllib.request
-import urllib.parse
-import zipfile
-import io
-from datetime import datetime, timezone
+name: Test TSETMC Data Sources
 
-CDN = "https://cdn.tsetmc.com/api"
-LEGACY_MARKET_WATCH = "https://old.tsetmc.com/tsev2/excel/MarketWatchPlus.aspx?d=0"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'data_source_test.py'
+      - '.github/workflows/test-data-source.yml'
 
+permissions:
+  contents: read
 
-def request_bytes(url, timeout=20):
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json,*/*",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response.status, response.headers.get("Content-Type", ""), response.read()
+jobs:
+  test-data-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
 
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-def test_cdn():
-    symbol = urllib.parse.quote("فولاد", safe="")
-    url = CDN + "/Instrument/GetInstrumentSearch/" + symbol
-    status, content_type, body = request_bytes(url, timeout=12)
-    data = json.loads(body.decode("utf-8-sig"))
-    items = data.get("instrumentSearch", [])
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    found = next(
-        (x for x in items if x.get("lVal18AFC") == "فولاد" and x.get("insCode")),
-        None,
-    )
-
-    result = {
-        "success": bool(found),
-        "http_status": status,
-        "content_type": content_type,
-        "search_count": len(items),
-        "symbol_found": found,
-    }
-
-    if found:
-        quote_url = CDN + "/ClosingPrice/GetClosingPriceInfo/" + str(found["insCode"])
-        quote_status, quote_type, quote_body = request_bytes(quote_url, timeout=12)
-        quote = json.loads(quote_body.decode("utf-8-sig"))
-        result["quote"] = {
-            "success": quote_status == 200 and bool(quote),
-            "http_status": quote_status,
-            "content_type": quote_type,
-            "response_keys": list(quote.keys()),
-        }
-
-    return result
-
-
-def test_legacy_market_watch():
-    status, content_type, body = request_bytes(
-        LEGACY_MARKET_WATCH, timeout=25
-    )
-    is_xlsx = body[:2] == b"PK" and zipfile.is_zipfile(io.BytesIO(body))
-
-    return {
-        "success": status == 200 and is_xlsx,
-        "http_status": status,
-        "content_type": content_type,
-        "bytes_received": len(body),
-        "xlsx_signature_valid": is_xlsx,
-    }
-
-
-def main():
-    result = {
-        "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-        "note": "Green workflow alone does not prove live data access.",
-        "tests": {},
-    }
-
-    for name, tester in (
-        ("tsetmc_cdn", test_cdn),
-        ("tsetmc_legacy_market_watch", test_legacy_market_watch),
-    ):
-        try:
-            result["tests"][name] = tester()
-        except Exception as error:
-            result["tests"][name] = {
-                "success": False,
-                "error": str(error),
-            }
-
-    result["any_source_validated"] = any(
-        item.get("success") for item in result["tests"].values()
-    )
-
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
-if __name__ == "__main__":
-    main()
+      - name: Test TSETMC data sources
+        run: python data_source_test.py
