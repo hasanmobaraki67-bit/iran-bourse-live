@@ -1,24 +1,29 @@
 name: Test Bourse Data Source
 
 on:
-workflow_dispatch:
-push:
-paths:
-- "data_source_test.py"
-- ".github/workflows/test-data-source.yml"
+  workflow_dispatch:
+  push:
+    paths:
+      - "data_source_test.py"
+      - ".github/workflows/test-data-source.yml"
 
 jobs:
-test-source:
-runs-on: ubuntu-latest
+  test-source:
+    runs-on: ubuntu-latest
 
-steps:
-  - name: Get repository files
-    uses: actions/checkout@v4
+    steps:
+      - name: Get repository files
+        uses: actions/checkout@v4
 
-  - name: Set up Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.12"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-  - name: Test data source
-    run: python data_source_test.py
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run data source test
+        run: python data_source_test.py
