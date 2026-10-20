@@ -1,37 +1,11 @@
-name: Test TSETMC Data Sources
-
-
-on:
-workflow_dispatch:
-push:
-branches:
-- main
-paths:
-- 'data_source_test.py'
-- '.github/workflows/test-data-source.yml'
-
-
-permissions:
-contents: read
-
-
-jobs:
-test-data-source:
-runs-on: ubuntu-latest
-timeout-minutes: 3
-
-
 steps:
-  - name: Check out repository
+  - name: Get repository files
     uses: actions/checkout@v4
 
   - name: Set up Python
     uses: actions/setup-python@v5
     with:
-      python-version: '3.x'
+      python-version: "3.12"
 
-  - name: Test TSETMC data sources
+  - name: Test data source
     run: python data_source_test.py
-
-
-
